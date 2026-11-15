@@ -1,0 +1,10 @@
+.env
+.env.*
+node_modules/
+.DS_Store
+Thumbs.db
+_to_delete/
+
+# 公開しない（自宅PCにだけ置く）
+docs/
+.claude/

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>動作確認｜ライブ翻訳ノート</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="css/check.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>動作確認</h1>
+  <p class="lead">
+    このブラウザで「ライブ翻訳ノート」の各機能が使えるかを調べます。開いただけでは何もダウンロードせず、外部への送信もしません。<br>
+    下の「テスト」ボタンを押すと、AIモデルのダウンロードや、マイク・画面共有の許可を求める画面が出ることがあります。
+  </p>
+  <div class="actions">
+    <button id="recheck">もう一度調べる</button>
+    <button id="copy" class="primary">結果をコピー</button>
+    <a href="index.html">← 本体に戻る</a>
+  </div>
+  <textarea id="copyFallback" class="fallback" rows="8" readonly hidden></textarea>
+
+  <div id="groups"></div>
+
+  <section class="card">
+    <h2>音声認識を実際に試す（約10秒）</h2>
+    <p class="note">
+      英語の音声（YouTubeの英語動画など）を流しながら押してください。聞き取れた英語と、エラーがあればその内容を表示します。<br>
+      ・<b>画面・タブの音声で試す</b>：ブラウザで再生中なら共有画面で「タブ」を選び「タブの音声も共有する」をオン。Teamsのデスクトップアプリなら「画面全体」を選び「システムの音声も共有する」をオンにします。<br>
+      ・このテストはヘッドホンをつけるなど、<b>マイクに音が入らない状態</b>で試してください。古いブラウザは画面の音声を受け取れず、代わりにマイクで聞き取ってしまうため、正しく判定できません。
+    </p>
+    <div class="actions">
+      <button id="testMic">マイクで試す</button>
+      <button id="testDisplay">画面・タブの音声で試す</button>
+    </div>
+    <div id="speechLive" class="live"></div>
+  </section>
+
+  <section class="card">
+    <h2>会社PCで確認してほしいこと</h2>
+    <ol class="note">
+      <li>このページの「結果をコピー」を押し、内容を貼り付けて共有する</li>
+      <li>アドレスバーに <code>edge://policy</code>（Chromeでは <code>chrome://policy</code>）と入力し、「GenAILocalFoundationalModelSettings」という項目があるか確認する（あれば値も）</li>
+      <li>EdgeとChromeの両方でこのページを開いて、結果を比べる</li>
+      <li>（公開後に確認）会社のネットワークで github.io のページが開けるか</li>
+    </ol>
+  </section>
+</div>
+<div id="msg"></div>
+<script src="js/check.js" defer></script>
+</body>
+</html>

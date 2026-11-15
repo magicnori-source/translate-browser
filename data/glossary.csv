@@ -1,0 +1,149 @@
+英語,日本語訳,分野,メモ
+clinical trial,臨床試験,臨床試験一般,承認目的の場合は「治験」
+protocol,治験実施計画書,臨床試験一般,プロトコルとも
+investigator,治験責任医師,臨床試験一般,principal investigator（PI）も同じ
+principal investigator,治験責任医師,臨床試験一般,PI
+sub-investigator,治験分担医師,臨床試験一般,
+sponsor,治験依頼者,臨床試験一般,
+site,実施医療機関,臨床試験一般,文脈により「施設」
+informed consent,インフォームド・コンセント,臨床試験一般,
+enrollment,症例登録,臨床試験一般,
+recruitment,被験者募集,臨床試験一般,
+screening,スクリーニング,臨床試験一般,
+screen failure,スクリーニング脱落,臨床試験一般,
+randomization,無作為化,臨床試験一般,ランダム化とも
+double-blind,二重盲検,臨床試験一般,
+open-label,非盲検,臨床試験一般,
+placebo,プラセボ,臨床試験一般,
+endpoint,評価項目,臨床試験一般,
+primary endpoint,主要評価項目,臨床試験一般,
+secondary endpoint,副次評価項目,臨床試験一般,
+exploratory endpoint,探索的評価項目,臨床試験一般,
+inclusion criteria,選択基準,臨床試験一般,
+exclusion criteria,除外基準,臨床試験一般,
+adverse event,有害事象,臨床試験一般,AE
+serious adverse event,重篤な有害事象,臨床試験一般,SAE
+adverse drug reaction,副作用,臨床試験一般,ADR
+protocol deviation,治験実施計画書からの逸脱,臨床試験一般,プロトコル逸脱
+dropout,脱落,臨床試験一般,
+monitoring,モニタリング,臨床試験一般,
+source data verification,原資料との照合,臨床試験一般,SDV
+risk-based monitoring,リスクに基づくモニタリング,臨床試験一般,RBM
+case report form,症例報告書,臨床試験一般,CRF
+electronic data capture,電子データ収集システム,臨床試験一般,EDC
+database lock,データベース固定,臨床試験一般,
+trial master file,治験関連文書の保管ファイル,臨床試験一般,TMF
+institutional review board,治験審査委員会,臨床試験一般,IRB
+good clinical practice,GCP（医薬品の臨床試験の実施の基準）,臨床試験一般,
+decentralized clinical trial,分散型臨床試験,臨床試験一般,DCT
+feasibility,実施可能性調査,臨床試験一般,文脈により「実現可能性」
+first patient in,最初の被験者登録,臨床試験一般,FPI
+last patient out,最終被験者の観察終了,臨床試験一般,LPO
+first-in-human,ヒト初回投与,臨床試験一般,FIH
+dose escalation,用量漸増,臨床試験一般,
+maximum tolerated dose,最大耐量,臨床試験一般,MTD
+pharmacokinetics,薬物動態,臨床試験一般,PK
+pharmacodynamics,薬力学,臨床試験一般,PD（文脈で病勢進行と区別）
+biomarker,バイオマーカー,臨床試験一般,
+real-world data,リアルワールドデータ,臨床試験一般,RWD
+real-world evidence,リアルワールドエビデンス,臨床試験一般,RWE
+patient-reported outcome,患者報告アウトカム,臨床試験一般,PRO
+key opinion leader,キーオピニオンリーダー,臨床試験一般,KOL
+overall survival,全生存期間,オンコロジー,OS
+progression-free survival,無増悪生存期間,オンコロジー,PFS
+disease-free survival,無病生存期間,オンコロジー,DFS
+event-free survival,無イベント生存期間,オンコロジー,EFS
+objective response rate,奏効率,オンコロジー,ORR
+complete response,完全奏効,オンコロジー,CR
+partial response,部分奏効,オンコロジー,PR
+stable disease,安定,オンコロジー,SD
+progressive disease,進行,オンコロジー,PD
+duration of response,奏効期間,オンコロジー,DOR
+disease control rate,病勢コントロール率,オンコロジー,DCR
+RECIST,RECIST（固形がんの治療効果判定基準）,オンコロジー,
+dose-limiting toxicity,用量制限毒性,オンコロジー,DLT
+first-line,一次治療,オンコロジー,
+second-line,二次治療,オンコロジー,
+relapsed,再発,オンコロジー,
+refractory,難治性,オンコロジー,
+metastatic,転移性,オンコロジー,
+solid tumor,固形がん,オンコロジー,
+hematologic malignancy,血液がん,オンコロジー,
+standard of care,標準治療,オンコロジー,
+monotherapy,単剤療法,オンコロジー,
+combination therapy,併用療法,オンコロジー,
+immune checkpoint inhibitor,免疫チェックポイント阻害薬,オンコロジー,
+antibody-drug conjugate,抗体薬物複合体,オンコロジー,ADC
+bispecific antibody,二重特異性抗体,オンコロジー,
+CAR-T,CAR-T細胞療法,オンコロジー,
+neoadjuvant,術前補助療法,オンコロジー,
+adjuvant,術後補助療法,オンコロジー,
+minimal residual disease,微小残存病変,オンコロジー,MRD
+companion diagnostic,コンパニオン診断薬,オンコロジー,
+tumor mutational burden,腫瘍遺伝子変異量,オンコロジー,TMB
+medical device,医療機器,医療機器,
+software as a medical device,プログラム医療機器,医療機器,SaMD
+combination product,コンビネーション製品,医療機器,
+clinical investigation,医療機器の臨床試験,医療機器,承認目的は「治験」
+investigational device exemption,治験用機器の適用免除,医療機器,IDE（米国）
+premarket approval,市販前承認,医療機器,PMA（米国）
+510(k),510(k)（市販前届出）,医療機器,
+De Novo,De Novo分類申請,医療機器,
+predicate device,先行機器,医療機器,
+breakthrough device designation,ブレークスルーデバイス指定,医療機器,
+design control,設計管理,医療機器,
+risk management,リスクマネジメント,医療機器,ISO 14971
+ISO 13485,ISO 13485（医療機器の品質マネジメントシステム）,医療機器,
+usability engineering,ユーザビリティエンジニアリング,医療機器,
+human factors,ヒューマンファクター,医療機器,
+biocompatibility,生体適合性,医療機器,
+cybersecurity,サイバーセキュリティ,医療機器,
+notified body,ノーティファイドボディ（認証機関）,医療機器,EU
+Medical Device Regulation,欧州医療機器規則,医療機器,MDR
+CE marking,CEマーキング,医療機器,
+post-market surveillance,市販後調査,医療機器,
+post-market clinical follow-up,市販後臨床フォローアップ,医療機器,PMCF
+wearable,ウェアラブル機器,医療機器,
+digital health,デジタルヘルス,医療機器,
+statistically significant,統計学的に有意,統計解析,
+p-value,p値,統計解析,
+confidence interval,信頼区間,統計解析,CI
+hazard ratio,ハザード比,統計解析,HR
+odds ratio,オッズ比,統計解析,
+median,中央値,統計解析,
+sample size,症例数,統計解析,文脈により「サンプルサイズ」
+statistical power,検出力,統計解析,
+intention-to-treat,ITT解析,統計解析,
+per-protocol,PP解析,統計解析,
+interim analysis,中間解析,統計解析,
+non-inferiority,非劣性,統計解析,
+superiority,優越性,統計解析,
+Kaplan-Meier,カプラン・マイヤー法,統計解析,
+subgroup analysis,サブグループ解析,統計解析,
+estimand,エスティマンド,統計解析,
+missing data,欠測データ,統計解析,
+multiplicity,多重性,統計解析,
+covariate,共変量,統計解析,
+Bayesian,ベイズ流,統計解析,
+FDA,米国食品医薬品局（FDA）,薬事・承認申請,
+EMA,欧州医薬品庁（EMA）,薬事・承認申請,
+PMDA,医薬品医療機器総合機構（PMDA）,薬事・承認申請,
+MHLW,厚生労働省,薬事・承認申請,
+ICH,ICH（医薬品規制調和国際会議）,薬事・承認申請,
+new drug application,新薬承認申請,薬事・承認申請,NDA（米国）
+biologics license application,生物製剤承認申請,薬事・承認申請,BLA（米国）
+investigational new drug,治験許可申請,薬事・承認申請,IND（米国）
+marketing authorization,販売承認,薬事・承認申請,
+accelerated approval,迅速承認,薬事・承認申請,米国
+conditional approval,条件付き承認,薬事・承認申請,
+breakthrough therapy designation,画期的治療薬指定,薬事・承認申請,
+priority review,優先審査,薬事・承認申請,
+orphan drug,希少疾病用医薬品,薬事・承認申請,オーファンドラッグ
+label,添付文書,薬事・承認申請,米国のlabelingも同様
+common technical document,コモン・テクニカル・ドキュメント,薬事・承認申請,CTD
+pharmacovigilance,医薬品安全性監視,薬事・承認申請,ファーマコビジランス
+post-marketing,市販後,薬事・承認申請,
+drug lag,ドラッグ・ラグ,薬事・承認申請,
+drug loss,ドラッグ・ロス,薬事・承認申請,
+health technology assessment,医療技術評価,薬事・承認申請,HTA
+pre-submission meeting,事前相談,薬事・承認申請,

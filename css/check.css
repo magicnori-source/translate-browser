@@ -1,0 +1,21 @@
+/* 動作確認画面（check.html） */
+.wrap{max-width:900px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:0 0 8px}
+h2{font-size:15px;margin:0 0 10px}
+.lead,.note{color:var(--sub);font-size:13px;line-height:1.7}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:top}
+td.name{width:34%;color:var(--text)}
+td.state{width:22%;white-space:nowrap}
+td.detail{color:var(--sub);word-break:break-word}
+td.detail button{font-size:12px;padding:3px 8px;margin-top:4px}
+.live{font-size:13px;line-height:1.7;white-space:pre-wrap;color:var(--sub);min-height:1.7em}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+#msg{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#2a2f3c;border:1px solid var(--line);padding:8px 14px;border-radius:8px;font-size:13px;display:none;max-width:90vw}
+@media (max-width:600px){
+  tr{display:block;border-top:1px solid var(--line);padding:6px 0}
+  td{display:block;border:none;padding:2px 4px;width:auto!important}
+}
+.fallback{width:100%;font:12px/1.6 monospace;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}

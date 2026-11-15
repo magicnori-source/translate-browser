@@ -1,0 +1,17 @@
+/* 色と文字の共通設定（本体・動作確認画面で共有）。ライトテーマは第4段階で追加する */
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222c; --line:#262b36;
+  --text:#e8eaf0; --sub:#8a92a6; --acc:#4f8cff;
+  --ok:#2ecc71; --warn:#f5a623; --err:#ff5c5c;
+  --btn:#222734; --fs:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif}
+select,button{font:inherit;font-size:13px;background:var(--btn);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+button{cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button.stop{background:var(--err);border-color:var(--err);color:#fff;font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+a{color:var(--acc)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sub);margin-right:4px}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.err{background:var(--err)}
