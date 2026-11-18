@@ -1,0 +1,182 @@
+// ブラウザ内蔵AI（Translator / Summarizer / LanguageModel）の準備と判定（ブラウザ用）
+// どのAPIもないブラウザで読み込んでも例外で落ちないようにしている。
+import { buildSystemPrompt, buildRefinePrompt, cleanRefineOutput } from './prompt.js';
+
+const noop = () => {};
+const hasApi = name => typeof self !== 'undefined' && name in self;
+
+// ダウンロードの進み具合を onStatus で知らせる monitor を作る
+function progressMonitor(onStatus) {
+  return m => m.addEventListener('downloadprogress', e => {
+    onStatus('warn', `ダウンロード中 ${Math.round((e.loaded || 0) * 100)}%`);
+  });
+}
+
+function errMessage(e) {
+  return e?.message || String(e);
+}
+
+// ---------- 翻訳（英→日） ----------
+// 認識言語が en-US でも en-GB でも、翻訳元は 'en' に統一する
+const TR_OPTS = { sourceLanguage: 'en', targetLanguage: 'ja' };
+let translator = null;
+let translatorCreating = null;
+
+export async function ensureTranslator(userClick, onStatus = noop) {
+  if (!hasApi('Translator')) { onStatus('err', 'このブラウザ非対応（原文のみ表示）'); return null; }
+  if (translator) return translator;
+  if (translatorCreating) return translatorCreating.catch(() => null);
+  try {
+    const av = await Translator.availability(TR_OPTS);
+    if (av === 'unavailable') { onStatus('err', 'この言語の組み合わせは非対応'); return null; }
+    if (av !== 'available' && !userClick) { onStatus('warn', '「AIを準備」を押してください'); return null; }
+    onStatus('warn', 'AIを準備中…');
+    translatorCreating = Translator.create({ ...TR_OPTS, monitor: progressMonitor(onStatus) });
+    translator = await translatorCreating;
+    onStatus('ok', '利用可（PC内で処理）');
+    return translator;
+  } catch (e) {
+    onStatus('err', '準備失敗: ' + errMessage(e));
+    return null;
+  } finally {
+    translatorCreating = null;
+  }
+}
+
+// ---------- 要約 ----------
+const SUM_OPTS = { type: 'key-points', format: 'plain-text', length: 'medium', expectedInputLanguages: ['ja'], outputLanguage: 'ja' };
+let summarizer = null;
+let summarizerCreating = null;
+
+export async function ensureSummarizer(userClick, onStatus = noop) {
+  if (!hasApi('Summarizer')) { onStatus('err', 'このブラウザ非対応'); return null; }
+  if (summarizer) return summarizer;
+  if (summarizerCreating) return summarizerCreating.catch(() => null);
+  try {
+    const av = await Summarizer.availability(SUM_OPTS);
+    if (av === 'unavailable') { onStatus('err', 'PCの性能不足で利用不可'); return null; }
+    if (av !== 'available' && !userClick) { onStatus('warn', '「AIを準備」を押してください'); return null; }
+    onStatus('warn', 'AIを準備中…');
+    summarizerCreating = Summarizer.create({ ...SUM_OPTS, monitor: progressMonitor(onStatus) });
+    summarizer = await summarizerCreating;
+    onStatus('ok', '利用可（PC内で処理）');
+    return summarizer;
+  } catch (e) {
+    onStatus('err', '準備失敗: ' + errMessage(e));
+    return null;
+  } finally {
+    summarizerCreating = null;
+  }
+}
+
+// ---------- 仕上げ訳（内蔵LLM / Prompt API） ----------
+const LM_IO = {
+  expectedInputs: [{ type: 'text', languages: ['en', 'ja'] }],
+  expectedOutputs: [{ type: 'text', languages: ['ja'] }],
+};
+let baseSession = null;    // システムプロンプトだけを入れた土台。段落ごとに clone して使う
+let baseCreating = null;
+let refiner = null;
+let refinerOpts = {};
+
+function abortError(signal) {
+  const r = signal?.reason;
+  if (r instanceof Error || (typeof DOMException !== 'undefined' && r instanceof DOMException)) return r;
+  return typeof DOMException !== 'undefined' ? new DOMException('中断しました', 'AbortError') : new Error('中断しました');
+}
+
+// 中断されたら即座に失敗する Promise と組み合わせる（prompt() が中断に反応しない実装への保険）
+function raceAbort(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      v => { signal.removeEventListener('abort', onAbort); resolve(v); },
+      e => { signal.removeEventListener('abort', onAbort); reject(e); },
+    );
+  });
+}
+
+function makeRefiner() {
+  return {
+    /**
+     * 1段落を仕上げ訳する。訳として使えない出力なら null。中断・時間切れでは AbortError で失敗する。
+     * contextParas: [{src, ja}]（直前の段落。古い順）
+     */
+    async refine(paraId, src, contextParas = [], signal) {
+      if (signal?.aborted) throw abortError(signal);
+      if (!baseSession) throw new Error('内蔵LLMが準備されていません');
+      const ja = String(refinerOpts.getJa?.(paraId) ?? '');
+      const glossary = refinerOpts.getGlossary?.() ?? [];
+      let session = null;
+      // clone が中断のあとで遅れて終わった場合も、作られたセッションは必ず破棄する
+      let abandoned = false;
+      const cloning = baseSession.clone({ signal });
+      cloning.then(s => { if (abandoned) try { s?.destroy?.(); } catch {} }, noop);
+      try {
+        session = await raceAbort(cloning, signal);
+        const text = buildRefinePrompt({ target: { src, ja }, context: contextParas, glossary });
+        const raw = await raceAbort(session.prompt(text, { signal }), signal);
+        const out = cleanRefineOutput(raw, { src, ja });
+        return out.ok ? out.text : null;
+      } catch (e) {
+        // 土台のセッションが壊れていたら、次回作り直せるように捨てる
+        if (!signal?.aborted && /destroy/i.test(errMessage(e))) resetRefiner();
+        throw e;
+      } finally {
+        abandoned = true;
+        try { session?.destroy?.(); } catch {}
+      }
+    },
+  };
+}
+
+// 仕上げ訳の土台を捨てて、次の ensureRefiner で作り直させる（失敗が続いたときに app から呼ぶ）
+export function resetRefiner() {
+  try { baseSession?.destroy?.(); } catch {}
+  baseSession = null;
+  refiner = null;
+}
+
+/**
+ * 仕上げ訳の準備。使えなければ null（段落訳のまま動かす）。
+ * options（任意・設計メモからの追加）:
+ *   getJa(paraId) -> string     その段落の段落訳（「参考の機械訳」と長さ判定に使う）
+ *   getGlossary() -> [{en, ja}] 用語集
+ */
+export async function ensureRefiner(userClick, onStatus = noop, options = {}) {
+  refinerOpts = options || {};
+  if (!hasApi('LanguageModel')) { onStatus('err', 'このブラウザ非対応（段落訳まで）'); return null; }
+  if (refiner) return refiner;
+  if (baseCreating) { await baseCreating.catch(noop); return refiner; }
+  try {
+    const av = await LanguageModel.availability(LM_IO);
+    if (av === 'unavailable') { onStatus('err', 'PCの性能不足で利用不可（段落訳まで）'); return null; }
+    if (av !== 'available' && !userClick) { onStatus('warn', '「AIを準備」を押してください（段落訳まで）'); return null; }
+    onStatus('warn', 'AIを準備中…');
+    baseCreating = LanguageModel.create({
+      initialPrompts: [{ role: 'system', content: buildSystemPrompt() }],
+      ...LM_IO,
+      monitor: progressMonitor(onStatus),
+    });
+    baseSession = await baseCreating;
+    refiner = makeRefiner();
+    onStatus('ok', '利用可（PC内で処理）');
+    return refiner;
+  } catch (e) {
+    onStatus('err', '準備失敗: ' + errMessage(e) + '（段落訳まで）');
+    return null;
+  } finally {
+    baseCreating = null;
+  }
+}
+
+// ---------- ブラウザの判定 ----------
+export function isEdge() {
+  if (typeof navigator === 'undefined') return false;
+  const brands = navigator.userAgentData?.brands;
+  if (Array.isArray(brands) && brands.some(b => /edge/i.test(b?.brand || ''))) return true;
+  return /\bEdg(?:e|A|iOS)?\//.test(navigator.userAgent || '');
+}

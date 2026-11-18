@@ -14,13 +14,14 @@
   <label>音声の取り込み
     <select id="source">
       <option value="mic">マイク（スピーカーの音を拾う）</option>
-      <option value="display">画面・タブの音声を直接</option>
+      <option value="display">画面・タブの音声（直接取り込む）</option>
+      <option value="playback">テスト再生（音声なし）</option>
     </select>
   </label>
   <label>話している言語
     <select id="srcLang">
-      <option value="en-US|en">英語（米）</option>
-      <option value="en-GB|en">英語（英）</option>
+      <option value="en-US">英語（米）</option>
+      <option value="en-GB">英語（英）</option>
     </select>
   </label>
   <label>要約
@@ -30,7 +31,7 @@
       <option value="10">10分ごと</option>
     </select>
   </label>
-  <button id="prep">翻訳・要約の準備</button>
+  <button id="prep">AIを準備</button>
   <button id="start" class="primary">▶ 開始</button>
   <button id="stop" class="stop" disabled>■ 停止</button>
   <span class="spacer"></span>
@@ -40,31 +41,64 @@
   <button id="clear">クリア</button>
   <a class="link" href="check.html" target="_blank" rel="noopener">動作確認</a>
 </header>
+
+<details class="settings" id="settingsPanel">
+  <summary>設定</summary>
+  <div class="settings-body">
+    <label><input type="checkbox" id="optFlash" checked> 速報（話している途中の仮の訳）を表示</label>
+    <label>文の区切りとみなす無音の長さ <input type="number" id="optSentenceGap" min="300" max="5000" step="100"> ミリ秒</label>
+    <label>段落の区切りとみなす無音の長さ <input type="number" id="optParagraphGap" min="1000" max="15000" step="500"> ミリ秒</label>
+    <label>1段落の最大文数 <input type="number" id="optMaxSentences" min="1" max="10" step="1"> 文</label>
+    <button id="optReset" type="button">初期値に戻す</button>
+    <span class="hint">※1000ミリ秒＝1秒</span>
+  </div>
+  <div class="settings-body" id="playbackPanel">
+    <b>テスト再生</b>
+    <label>速さ
+      <select id="pbSpeed">
+        <option value="1">×1（実際の速さ）</option>
+        <option value="5">×5</option>
+        <option value="20">×20</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="pbPunctuate"> 句読点付きで流す（オフのほうが実際の音声認識に近い）</label>
+    <label class="wide">流す英文（空欄ならサンプル文を使います）
+      <textarea id="pbText" rows="4" placeholder="講演の書き起こしなど、英文を貼り付けてください。段落は空行で区切ります。"></textarea>
+    </label>
+  </div>
+</details>
+
 <div class="status">
   <span><span id="dRec" class="dot"></span>音声認識: <b id="sRec">待機中</b></span>
-  <span><span id="dTr" class="dot"></span>翻訳: <b id="sTr">未確認</b></span>
-  <span><span id="dSum" class="dot"></span>要約: <b id="sSum">未確認</b></span>
+  <span><span id="dTr" class="dot"></span>翻訳: <b id="sTr">準備前</b></span>
+  <span><span id="dRef" class="dot"></span>仕上げ訳: <b id="sRef">準備前</b></span>
+  <span><span id="dSum" class="dot"></span>要約: <b id="sSum">準備前</b></span>
   <span>経過: <b id="elapsed">00:00</b></span>
 </div>
+<div class="notice" id="notice" hidden></div>
+
 <main>
   <section id="log">
     <div id="list"><div class="empty">
       使い方<br>
-      ①「翻訳・要約の準備」を一度押す（初回のみAIモデルをダウンロード）<br>
+      ①「AIを準備」を一度押す（初回だけAIのダウンロードがあります）<br>
       ② 音声の取り込み方を選んで「▶ 開始」<br>
       ・<b>マイク</b>：PCのスピーカーから出る音をマイクで拾います<br>
-      ・<b>画面・タブの音声を直接</b>：共有ダイアログで「タブ」または「画面全体」を選び、<b>「音声も共有する」をオン</b>にします<br>
+      ・<b>画面・タブの音声</b>：共有する画面を選ぶ画面で「タブ」または「画面全体」を選び、<b>「音声も共有する」をオン</b>にします<br>
+      ・<b>テスト再生</b>：音声なしで英文を流して、訳の出方を確かめます（速さなどは「設定」で変えられます）<br>
+      訳は「速報（下の薄い行）→ 段落訳 → 仕上げ訳」の順に精度が上がります。仕上げ訳に置き換わると一瞬色が付きます。<br>
       うまく動かないときは、右上の「動作確認」でこのブラウザの対応状況を確認してください。
     </div></div>
     <div id="interim"></div>
+    <button id="backToLatest" class="back-to-latest" hidden>↓ 最新へ戻る</button>
   </section>
   <aside>
     <h2>📝 要約 <button id="sumNow">今すぐ要約</button></h2>
     <div id="sums"><div class="empty">要約はここに表示されます。</div></div>
-    <div class="ad">広告枠（ここに広告を表示する想定）</div>
+    <div class="ad">広告枠（予定）</div>
   </aside>
 </main>
 <div id="msg"></div>
-<script src="js/app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
