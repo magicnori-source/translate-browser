@@ -62,3 +62,7 @@ details.settings select,details.settings button{font-size:12px;padding:3px 8px}
   background:color-mix(in srgb,var(--warn) 14%,transparent);border-bottom:1px solid var(--warn)}
 .notice[hidden]{display:none}
 details.settings .hint{font-size:11px;color:var(--sub)}
+/* 話している途中の英語（リアルタイム表示）。速報の訳のすぐ下に、原文と同じ見た目で出す */
+.interim-src{font-size:calc(var(--fs)*.62);color:var(--sub);line-height:1.5;padding:0 0 10px;min-height:1.5em}
+.hide-src .interim-src{display:none}
+.interim-src:empty{min-height:0;padding:0}

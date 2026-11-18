@@ -155,6 +155,12 @@ function refineFallback(paraId) {
   sendRefine(paraId);
 }
 
+// ---------- 話している途中の英語（リアルタイム表示） ----------
+const liveSrcEl = $('interimSrc');
+function setLiveSource(text) {
+  if (liveSrcEl.textContent !== text) liveSrcEl.textContent = text;
+}
+
 // ---------- 区切りのイベントを処理する ----------
 function handle(events) {
   if (!events.length) return;
@@ -162,6 +168,7 @@ function handle(events) {
     switch (e.type) {
       case 'interim':
         hasInterim = !!e.text;
+        setLiveSource(e.text); // 話している途中の英語は、訳を待たずにそのまま出す
         if (!e.text) { view.setFlash(''); break; }
         if (translator && settings.flash) queue.requestFlash(e.text);
         break;
@@ -280,6 +287,7 @@ function stop() {
   } finally {
     if (displayStream) { displayStream.getTracks().forEach(t => t.stop()); displayStream = null; }
     hasInterim = false;
+    setLiveSource('');
     queue.setFlashEnabled(false);         // 待ちの速報を捨てる（段落訳・仕上げ訳は最後まで続ける）
     view.setFlash('');
     setRunningButtons('idle');

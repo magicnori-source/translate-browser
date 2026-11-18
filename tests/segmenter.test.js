@@ -393,3 +393,16 @@ test('句読点が付く認識では、長い文を final の切れ目で切ら�
   assert.equal(sentences[0], 'This is the first sentence.');
   assert.match(sentences[1], /^and then we looked .* which was reassuring\.$/);
 });
+
+test('確定結果が来ないまま途中結果が残った場合、段落の無音を超えたら文として確定し、途中結果を消す', () => {
+  const seg = createSegmenter({ sentenceGapMs: 1200, paragraphGapMs: 3000 });
+  seg.interim('we are now going to', 1000);
+  // 認識が止まって final が来ない。3秒までは残す
+  let evs = seg.tick(3800);
+  assert.equal(sentences(evs).length, 0);
+  evs = seg.tick(4200);
+  assert.deepEqual(sentences(evs), ['we are now going to']);
+  assert.equal(closes(evs).length, 1);
+  const last = evs.filter(e => e.type === 'interim').pop();
+  assert.equal(last.text, '');
+});

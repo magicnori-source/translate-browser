@@ -188,6 +188,12 @@ export function createSegmenter(options = {}) {
       const events = [];
       if (lastVoiceAt === null) return events;
       const silence = now - lastVoiceAt;
+      // 音声認識が確定結果を返さないまま止まった（再開した）場合、途中結果が残り続けるので、
+      // 段落の区切りと同じ長さの無音が続いたら、聞こえた分を文として確定する
+      if (interimText && silence > opts.paragraphGapMs) {
+        pending = joinText(pending, interimText);
+        interimText = '';
+      }
       if (pending && silence >= opts.sentenceGapMs) {
         commitSentence(pending, now, events);
         pending = '';
