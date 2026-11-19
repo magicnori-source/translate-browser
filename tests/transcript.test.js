@@ -11,7 +11,7 @@ function setup() {
 test('openParagraph で初期状態の段落ができる', () => {
   const tr = setup();
   assert.deepEqual(tr.get('p1'), {
-    id: 'p1', startedAt: 1000, sentences: [], src: '', ja: '', stage: 'pending', closed: false, version: 0,
+    id: 'p1', startedAt: 1000, sentences: [], fillers: [], src: '', srcForTranslate: '', ja: '', stage: 'pending', closed: false, version: 0,
   });
   // 同じ id をもう一度開いても作り直さない
   tr.addSentence('p1', 'A.');
@@ -139,3 +139,102 @@ test('clear で空になり、同じ id を作り直せる', () => {
   // clear 前の version 情報は残っていない
   assert.equal(tr.setJa('p1', '新しい訳', 'paragraph', 1), true);
 });
+
+// ---- あいづち（filler）----
+
+test('あいづちの文は version を上げず、srcForTranslate に入らない', () => {
+  const tr = setup();
+  assert.equal(tr.addSentence('p1', 'Wow.', { filler: true }), 0);
+  assert.equal(tr.addSentence('p1', 'The data is clear.'), 1);
+  assert.equal(tr.addSentence('p1', 'Oh, okay.', { filler: true }), 1);
+  assert.equal(tr.addSentence('p1', 'We saw growth.', { filler: false }), 2);
+  const p = tr.get('p1');
+  assert.equal(p.version, 2);
+  assert.deepEqual(p.sentences, ['Wow.', 'The data is clear.', 'Oh, okay.', 'We saw growth.']);
+  assert.deepEqual(p.fillers, [true, false, true, false]);
+  assert.equal(p.src, 'Wow. The data is clear. Oh, okay. We saw growth.');
+  assert.equal(p.srcForTranslate, 'The data is clear. We saw growth.');
+});
+
+test('第3引数を省略・null・{} にしたときは普通の文として扱う', () => {
+  const tr = setup();
+  assert.equal(tr.addSentence('p1', 'A.'), 1);
+  assert.equal(tr.addSentence('p1', 'B.', {}), 2);
+  assert.equal(tr.addSentence('p1', 'C.', null), 3);
+  assert.equal(tr.get('p1').srcForTranslate, 'A. B. C.');
+  assert.deepEqual(tr.get('p1').fillers, [false, false, false]);
+});
+
+test('あいづちだけの段落は閉じると stage が filler になり、訳を受け付けない', () => {
+  const tr = setup();
+  tr.addSentence('p1', 'Um.', { filler: true });
+  tr.addSentence('p1', 'Yeah yeah.', { filler: true });
+  assert.equal(tr.get('p1').stage, 'pending'); // 閉じるまでは pending
+  assert.equal(tr.close('p1'), true);
+  const p = tr.get('p1');
+  assert.equal(p.stage, 'filler');
+  assert.equal(p.srcForTranslate, '');
+  assert.equal(p.src, 'Um. Yeah yeah.');
+  assert.equal(p.version, 0);
+  assert.equal(tr.setJa('p1', '簡単風', 'paragraph', 0), false);
+  assert.equal(tr.setJa('p1', '簡単風', 'refined'), false);
+  assert.equal(tr.get('p1').stage, 'filler');
+  assert.equal(tr.bestJa('p1'), '');
+});
+
+test('閉じる前に訳が入っていても、あいづちだけなら filler になり訳は空', () => {
+  const tr = setup();
+  tr.addSentence('p1', 'Oh.', { filler: true });
+  assert.equal(tr.setJa('p1', 'ああ', 'paragraph', 0), true);
+  tr.close('p1');
+  assert.equal(tr.get('p1').stage, 'filler');
+  assert.equal(tr.bestJa('p1'), '');
+});
+
+test('あいづちでない文が1つでもあれば filler にならない', () => {
+  const tr = setup();
+  tr.addSentence('p1', 'Wow.', { filler: true });
+  tr.addSentence('p1', 'This works.');
+  tr.close('p1');
+  assert.equal(tr.get('p1').stage, 'pending');
+  assert.equal(tr.setJa('p1', 'これは動く。', 'paragraph', 1), true);
+  assert.equal(tr.bestJa('p1'), 'これは動く。');
+});
+
+test('文のない段落を閉じても filler になる（訳すものがない）', () => {
+  const tr = setup();
+  tr.close('p1');
+  assert.equal(tr.get('p1').stage, 'filler');
+});
+
+test('あいづちを挟んでも段落訳の版の判定がずれない', () => {
+  const tr = setup();
+  tr.addSentence('p1', 'A.');                       // v1
+  assert.equal(tr.setJa('p1', '訳v1', 'paragraph', 1), true);
+  tr.addSentence('p1', 'Hmm.', { filler: true });   // v1 のまま
+  assert.equal(tr.get('p1').version, 1);
+  assert.equal(tr.setJa('p1', '訳v1再', 'paragraph', 1), true);
+  tr.addSentence('p1', 'B.');                       // v2
+  assert.equal(tr.setJa('p1', '訳v1古', 'paragraph', 1), true); // まだ v2 の訳が無いので受け付ける
+  assert.equal(tr.setJa('p1', '訳v2', 'paragraph', 2), true);
+  assert.equal(tr.setJa('p1', '古い', 'paragraph', 1), false);
+});
+
+test('get のコピーの fillers を書き換えても中身は変わらない', () => {
+  const tr = setup();
+  tr.addSentence('p1', 'Oh.', { filler: true });
+  tr.get('p1').fillers[0] = false;
+  assert.deepEqual(tr.get('p1').fillers, [true]);
+});
+
+test('addSentence の translateText は訳用の原文にだけ使い、表示用の src は元の文のまま', () => {
+  const tr = createTranscript();
+  tr.openParagraph('p1', 0);
+  tr.addSentence('p1', 'Um we are planning to enroll', { translateText: 'We are planning to enroll' });
+  tr.addSentence('p1', 'Wow.', { filler: true });
+  const p = tr.get('p1');
+  assert.equal(p.src, 'Um we are planning to enroll Wow.');
+  assert.equal(p.srcForTranslate, 'We are planning to enroll');
+  assert.equal(p.version, 1);
+});
+

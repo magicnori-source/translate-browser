@@ -454,3 +454,111 @@ test('2時間ぶんの依頼を流しても待ちとタイマーが積み上が�
   // 残るのは偽の translate 自身が持つタイマー（最大1つ）だけ
   assert.ok(clock.pending() <= 1);
 });
+
+// ---------------- 仕上げ訳の一時停止 ----------------
+test('pauseRefine(true) のあいだは新しい仕上げ訳を始めず、実行中のものは続く', async () => {
+  const { rf, q, of } = setup();
+  q.requestRefine('p1', 'A.', []);
+  await flush();
+  assert.equal(rf.calls.length, 1);
+  const signal = rf.calls[0].args[3];
+  q.pauseRefine(true);
+  q.requestRefine('p2', 'B.', []);
+  q.requestRefine('p3', 'C.', []);
+  await flush();
+  assert.equal(signal.aborted, false); // 実行中は止めない
+  rf.calls[0].resolve('仕上げア');
+  await flush();
+  assert.deepEqual(of('refined').map((e) => e.paraId), ['p1']);
+  assert.equal(rf.calls.length, 1); // 一時停止中なので次を始めない
+  assert.equal(of('stats').at(-1).refineQueued, 2);
+  assert.equal(of('stats').at(-1).refineBusy, false);
+});
+
+test('pauseRefine(false) で待ちを順番どおり処理する', async () => {
+  const { rf, q, of } = setup();
+  q.pauseRefine(true);
+  q.requestRefine('p1', 'A.', []);
+  q.requestRefine('p2', 'B.', []);
+  await flush();
+  assert.equal(rf.calls.length, 0);
+  q.pauseRefine(false);
+  await flush();
+  assert.equal(rf.calls.length, 1);
+  assert.equal(rf.calls[0].args[0], 'p1');
+  rf.calls[0].resolve('1');
+  await flush();
+  assert.equal(rf.calls[1].args[0], 'p2');
+  rf.calls[1].resolve('2');
+  await flush();
+  assert.deepEqual(of('refined').map((e) => e.paraId), ['p1', 'p2']);
+});
+
+test('一時停止中も待ちあふれは古いものを捨てて refine-skipped(backlog)', async () => {
+  const { rf, q, of } = setup({ options: { maxRefineBacklog: 3 } });
+  q.pauseRefine(true);
+  for (let i = 1; i <= 5; i++) q.requestRefine(`p${i}`, `S${i}.`, []);
+  await flush();
+  assert.equal(rf.calls.length, 0);
+  assert.deepEqual(of('refine-skipped').map((e) => [e.paraId, e.reason]), [['p1', 'backlog'], ['p2', 'backlog']]);
+  assert.equal(of('stats').at(-1).refineQueued, 3);
+  q.pauseRefine(false);
+  await flush();
+  assert.equal(rf.calls[0].args[0], 'p3');
+});
+
+test('whenRefineIdle は実行中がなければすぐ解決し、実行中なら終わってから解決する', async () => {
+  const { rf, q } = setup();
+  let idle = false;
+  await q.whenRefineIdle(); // なし: すぐ解決
+  q.requestRefine('p1', 'A.', []);
+  q.pauseRefine(true);
+  q.whenRefineIdle().then(() => { idle = true; });
+  await flush();
+  assert.equal(idle, false);
+  rf.calls[0].resolve('ア');
+  await flush();
+  assert.equal(idle, true);
+});
+
+test('whenRefineIdle は時間切れでも解決する', async () => {
+  const { clock, q } = setup({ options: { refineTimeoutMs: 1000 } });
+  q.requestRefine('p1', 'A.', []);
+  let idle = false;
+  q.whenRefineIdle().then(() => { idle = true; });
+  await clock.advance(999);
+  assert.equal(idle, false);
+  await clock.advance(1);
+  assert.equal(idle, true);
+});
+
+test('clear() で whenRefineIdle が解決し、一時停止も解除される', async () => {
+  const { rf, q, of } = setup();
+  q.requestRefine('p1', 'A.', []);
+  q.pauseRefine(true);
+  let idle = false;
+  q.whenRefineIdle().then(() => { idle = true; });
+  await flush();
+  assert.equal(idle, false);
+  q.clear();
+  await flush();
+  assert.equal(idle, true);
+  assert.equal(of('stats').at(-1).refinePaused, false);
+  q.requestRefine('p2', 'B.', []);
+  await flush();
+  assert.equal(rf.calls.length, 2);
+  assert.equal(rf.calls[1].args[0], 'p2');
+});
+
+test("'stats' に refinePaused が入る", async () => {
+  const { q, of } = setup();
+  assert.equal(q.stats().refinePaused, false);
+  q.pauseRefine(true);
+  assert.equal(of('stats').at(-1).refinePaused, true);
+  assert.equal(q.stats().refinePaused, true);
+  const n = of('stats').length;
+  q.pauseRefine(true); // 変化なし
+  assert.equal(of('stats').length, n);
+  q.pauseRefine(false);
+  assert.equal(of('stats').at(-1).refinePaused, false);
+});

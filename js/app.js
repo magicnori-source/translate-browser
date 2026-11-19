@@ -3,23 +3,30 @@
 import { createSegmenter } from './segmenter.js';
 import { createTranscript } from './transcript.js';
 import { createTranslateQueue } from './translate-queue.js';
-import { ensureTranslator, ensureSummarizer, ensureRefiner, resetRefiner, isEdge } from './ai.js';
-import { createSpeechSource } from './speech.js';
+import { ensureTranslator, ensureSummarizer, ensureRefiner, resetRefiner, ensureSummaryLM, resetSummaryLM, isEdge } from './ai.js';
+import { createSpeechSource, checkLocalSpeech, installLocalSpeech } from './speech.js';
+import { isFiller, stripFillerEdges } from './filler.js';
 import { createPlayback } from './playback.js';
 import { createView } from './view.js';
 
 const $ = id => document.getElementById(id);
 
 // ---------- 設定（このブラウザに保存） ----------
-const SETTINGS_KEY = 'lt-settings-v1';
-const DEFAULTS = { sentenceGapMs: 1200, paragraphGapMs: 3000, maxSentences: 4, flash: true };
+const SETTINGS_KEY = 'lt-settings-v2';
+const OLD_SETTINGS_KEY = 'lt-settings-v1';
+// 1段落の最大文数は、仕上げ訳を速くするため4から3に変更（v1で4のままの人は3に移す）
+const DEFAULTS = { sentenceGapMs: 1200, paragraphGapMs: 3000, maxSentences: 3, flash: true };
 const LIMITS = { sentenceGapMs: [300, 5000], paragraphGapMs: [1000, 15000], maxSentences: [1, 10] };
 
 function clamp(key, v) { const [lo, hi] = LIMITS[key]; return Math.min(hi, Math.max(lo, Math.round(v))); }
 function loadSettings() {
   const s = { ...DEFAULTS };
   try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    let saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (!saved) {
+      saved = JSON.parse(localStorage.getItem(OLD_SETTINGS_KEY) || '{}');
+      if (saved.maxSentences === 4) delete saved.maxSentences; // 旧初期値のままなら新しい初期値にする
+    }
     for (const key of Object.keys(LIMITS)) if (Number.isFinite(saved[key])) s[key] = clamp(key, saved[key]);
     if (typeof saved.flash === 'boolean') s.flash = saved.flash;
   } catch {}
@@ -35,7 +42,9 @@ const segOptions = () => ({ sentenceGapMs: settings.sentenceGapMs, paragraphGapM
 const transcript = createTranscript();
 const view = createView({ listEl: $('list'), flashEl: $('interim'), logEl: $('log'), backBtn: $('backToLatest') });
 let segmenter = createSegmenter(segOptions());
-let translator = null, refiner = null, summarizer = null;
+let translator = null, refiner = null, summarizer = null, summaryLM = null;
+let summarizing = false;
+let lastRecError = '';                      // 音声認識が止まった理由（停止後も表示に残す）
 let source = null, displayStream = null;
 let running = false, starting = false, stopping = false;
 let clockNow = () => Date.now();          // 区切りの判定に使う時計（テスト再生の早送りでは速く進める）
@@ -58,6 +67,29 @@ const statSum = (s, t) => setStat('dSum', 'sSum', s, t);
 const statRec = (s, t) => setStat('dRec', 'sRec', s, t);
 function hhmm(ms) { return new Date(ms).toTimeString().slice(0, 5); }
 
+// ---------- 仕上げ訳の記録（使えなかった訳と理由。メモリ上に直近50件だけ持ち、保存はしない） ----------
+const REFINE_REASON = {
+  empty: 'AIの出力が空',
+  'too-long': '長すぎる（段落訳の2.5倍超）',
+  'not-japanese': '日本語が少なすぎる',
+  error: 'エラー',
+  timeout: '時間切れ（20秒以内に終わらず、段落訳のまま）',
+};
+const refineLog = [];
+function addRefineLog(reason, src, raw) {
+  refineLog.unshift({ at: Date.now(), reason, src: String(src || ''), raw: String(raw || '') });
+  if (refineLog.length > 50) refineLog.length = 50;
+  const list = $('refineLogList');
+  list.textContent = '';
+  for (const r of refineLog) {
+    const li = document.createElement('li');
+    li.textContent = `${hhmm(r.at)} ${REFINE_REASON[r.reason] || r.reason}\n原文: ${r.src.slice(0, 160)}`
+      + (r.raw ? `\n${r.reason === 'error' ? 'エラーの内容' : 'AIの出力'}: ${r.raw.slice(0, 240)}` : '');
+    list.append(li);
+  }
+  $('refineLog').querySelector('summary').textContent = `仕上げ訳の記録（使えなかった訳: ${refineLog.length}件。最新50件まで・ページを閉じると消えます）`;
+}
+
 const notices = new Map();
 function setNotice(key, text) {
   if (text) notices.set(key, text); else notices.delete(key);
@@ -78,18 +110,54 @@ function limited(promise, userClick, onStatus, already = () => false) {
   return Promise.race([promise.catch(() => null), limit]).finally(() => clearTimeout(timer));
 }
 
-const refinerOptions = { getJa: id => transcript.get(id)?.ja || '', getGlossary: () => [] };
+const refinerOptions = {
+  getJa: id => transcript.get(id)?.ja || '',
+  getGlossary: () => [],
+  onReject: ({ reason, raw, src }) => addRefineLog(reason, src, raw),
+};
+
+// ---------- PC内の音声認識の準備 ----------
+const LOCAL_SPEECH_MSG = {
+  available: ['ok', '待機中（PC内で認識）'],
+  downloadable: ['warn', 'データ未取得（「AIを準備」を押してください）'],
+  downloading: ['warn', '音声認識データをダウンロード中…'],
+  unavailable: ['err', 'このPCでは使えません'],
+  unsupported: ['err', 'このブラウザでは使えません（Chromeで開いてください）'],
+};
+async function prepareSpeech(userClick) {
+  const lang = $('srcLang').value;
+  if (userClick) {
+    // ボタン操作の直後に呼ぶ必要がある（installLocalSpeech は最初の await より前にダウンロードを始める）
+    const installing = installLocalSpeech(lang);
+    statRec('warn', '音声認識データを準備中…');
+    await installing;
+  }
+  const st = await checkLocalSpeech(lang);
+  if (running || starting) return; // 動作中は「取り込み中」の表示を上書きしない
+  const [cls, text] = LOCAL_SPEECH_MSG[st] || ['err', 'PC内の音声認識を確認できません'];
+  statRec(cls, text);
+  setNotice('speech', st === 'unsupported' ? 'このアプリは音声を外部に送らないため、このブラウザではマイク・画面音声の認識が使えません（テスト再生は使えます）。Chromeで開いてください。' : '');
+}
+
+// 要約は内蔵LLM（見出し付きで整理）を優先し、使えなければ Summarizer API（簡易版）を使う
+async function prepareSummary(userClick) {
+  const m = await limited(ensureSummaryLM(userClick, statSum), userClick, statSum, () => !!summaryLM);
+  if (m) { summaryLM = m; return; }
+  if (summaryLM) return;
+  const s = await limited(ensureSummarizer(userClick, statSum), userClick, statSum, () => !!summarizer);
+  if (s) { summarizer = s; statSum('ok', '利用可（簡易版・PC内で処理）'); }
+}
 
 async function prepareAI(userClick) {
-  // 3つを同時に始める（ボタン操作の直後でないとダウンロードを始められないため）。
+  // すべてを同時に始める（ボタン操作の直後でないとダウンロードを始められないため）。
   // 一度使えた機能は、後の確認が「応答なし」でも手放さない。
   const tasks = [
+    prepareSpeech(userClick).catch(() => {}),
     limited(ensureTranslator(userClick, statTr), userClick, statTr, () => !!translator).then(t => { if (t) translator = t; }),
     limited(ensureRefiner(userClick, statRef, refinerOptions), userClick, statRef, () => !!refiner).then(r => { if (r) { refiner = r; refineErrorsInRow = 0; } }),
   ];
-  if (userClick || $('sumEvery').value !== '0') {
-    tasks.push(limited(ensureSummarizer(userClick, statSum), userClick, statSum, () => !!summarizer).then(s => { if (s) summarizer = s; }));
-  }
+  // 要約は「AIを準備」を押したときか、自動要約を使う設定のときだけ準備する
+  if (userClick || $('sumEvery').value !== '0') tasks.push(prepareSummary(userClick));
   await Promise.all(tasks);
   setNotice('translator', !('Translator' in self) ? 'このブラウザでは翻訳が使えないため、英語の原文だけを表示します。' : '');
   setNotice('edge', !('LanguageModel' in self) && isEdge() ? 'Edgeでは仕上げ訳が使えないため、訳は段落訳までになります。Chromeで開けば仕上げ訳まで使えます。' : '');
@@ -121,18 +189,28 @@ queue.on('refined', ({ paraId, ja }) => {
   view.markRefined(paraId);
   view.scrollIfFollowing();
 });
-queue.on('refine-skipped', ({ reason }) => {
+queue.on('refine-skipped', ({ paraId, reason }) => {
   // 間に合わなかった（待ちあふれ・時間切れ）と、失敗（使えない出力・エラー）を分けて数える
   if (reason === 'backlog' || reason === 'timeout') lateRefines++; else failedRefines++;
   statRef('warn', `段落訳のまま（間に合わず ${lateRefines}件・失敗 ${failedRefines}件）`);
   // 仕上げ訳の失敗や時間切れが続いたら、内蔵LLMを準備し直す（2時間の利用中に壊れても戻れるように）
-  if ((reason === 'error' || reason === 'timeout') && ++refineErrorsInRow >= 3) {
+  // 失敗の記録: エラーは内容を、時間切れは遅さの判断材料として残す
+  if (reason === 'error' || reason === 'timeout') {
+    addRefineLog(reason, transcript.get(paraId)?.srcForTranslate || '', reason === 'error' ? lastRefineError : '');
+  }
+  lastRefineError = '';
+  // 要約中の時間切れは内蔵LLMの取り合いによるものなので、作り直しの回数には数えない
+  if (!summarizing && (reason === 'error' || reason === 'timeout') && ++refineErrorsInRow >= 3) {
     refiner = null; refineErrorsInRow = 0;
     resetRefiner();
     prepareAI(false);
   }
 });
-queue.on('error', ({ lane, error }) => console.warn('[翻訳]', lane, error));
+let lastRefineError = '';
+queue.on('error', ({ lane, error }) => {
+  console.warn('[翻訳]', lane, error);
+  if (lane === 'refine') lastRefineError = `${error?.name || 'Error'}: ${error?.message || error}`;
+});
 queue.on('stats', s => { window.__ltStats = s; });
 // 動作確認用：URLの末尾に ?debug を付けたときだけ、コンソールから中身を見られるようにする
 if (new URLSearchParams(location.search).has('debug')) window.__lt = { transcript, queue, get translator() { return translator; }, get refiner() { return refiner; } };
@@ -142,16 +220,16 @@ function sendRefine(paraId) {
   clearTimeout(waitingRefine.get(paraId));
   waitingRefine.delete(paraId);
   const p = transcript.get(paraId);
-  if (!p || !refiner) return;
-  const context = transcript.recent(3, paraId).map(c => ({ src: c.src, ja: c.ja }));
-  queue.requestRefine(paraId, p.src, context);
+  if (!p || !refiner || p.stage === 'filler' || !p.srcForTranslate) return;
+  const context = transcript.recent(3, paraId).filter(c => c.srcForTranslate).map(c => ({ src: c.srcForTranslate, ja: c.ja }));
+  queue.requestRefine(paraId, p.srcForTranslate, context);
 }
 
 // 段落が閉じてから3秒たっても最終の段落訳が来ない場合の保険
 function refineFallback(paraId) {
   const p = transcript.get(paraId);
   // 最後の文まで入った段落訳が失敗・破棄されていたら、1回だけ訳し直しを頼む
-  if (p && p.stage !== 'refined' && translator && translatedVersion.get(paraId) !== p.version) queue.requestParagraph(paraId, p.src, p.version);
+  if (p && p.srcForTranslate && p.stage !== 'refined' && p.stage !== 'filler' && translator && translatedVersion.get(paraId) !== p.version) queue.requestParagraph(paraId, p.srcForTranslate, p.version);
   sendRefine(paraId);
 }
 
@@ -170,23 +248,31 @@ function handle(events) {
         hasInterim = !!e.text;
         setLiveSource(e.text); // 話している途中の英語は、訳を待たずにそのまま出す
         if (!e.text) { view.setFlash(''); break; }
-        if (translator && settings.flash) queue.requestFlash(e.text);
+        if (translator && settings.flash) {
+          const flashText = stripFillerEdges(e.text); // 速報でも文頭・文末のあいづちは訳さない
+          if (flashText && !isFiller(flashText)) queue.requestFlash(flashText);
+        }
         break;
       case 'paragraph-open':
         transcript.openParagraph(e.paraId, Date.now()); // 表示用の時刻は実際の時刻
         view.ensureParagraph(transcript.get(e.paraId));
         break;
       case 'sentence': {
-        const version = transcript.addSentence(e.paraId, e.text);
+        // あいづち・感嘆だけの文（Wow. Um. Okay. など）は訳さない（英語だけ残す）
+        // 文頭・文末のあいづちも訳には使わない（句読点のない認識では本文とつながって届くため）
+        const translateText = stripFillerEdges(e.text);
+        const filler = isFiller(e.text) || !translateText;
+        const version = transcript.addSentence(e.paraId, e.text, { filler, translateText });
         const p = transcript.get(e.paraId);
         view.updateParagraph(p);
-        if (translator && version != null) queue.requestParagraph(e.paraId, p.src, version);
+        if (!filler && translator && version != null && p.srcForTranslate) queue.requestParagraph(e.paraId, p.srcForTranslate, version);
         break;
       }
       case 'paragraph-close': {
         transcript.close(e.paraId);
         const p = transcript.get(e.paraId);
         view.updateParagraph(p);
+        if (p.stage === 'filler') break; // あいづちだけの段落は訳さない
         waitingRefine.set(e.paraId, setTimeout(() => refineFallback(e.paraId), 3000));
         // 翻訳機能がない、またはすでに最新の段落訳が届いていれば、すぐ仕上げ訳へ
         if (!translator || translatedVersion.get(e.paraId) === p.version) sendRefine(e.paraId);
@@ -220,14 +306,29 @@ async function start() {
   try {
     const kind = $('source').value;
     let audioTrack = null, text = '';
+    // 画面共有の選択はボタン操作の直後でないと開けないので、PC内の認識の確認より先に開く
     if (kind === 'display') {
       try { displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); }
-      catch { toast('画面共有がキャンセルされました'); return; }
+      catch (e) { toast(e?.name === 'NotAllowedError' ? '画面共有がキャンセルされました' : `画面共有を開始できませんでした（${e?.message || e}）`); return; }
       audioTrack = displayStream.getAudioTracks()[0] || null;
       displayStream.getVideoTracks().forEach(t => t.stop()); // 映像は使わない（保存・送信もしない）
       if (!audioTrack) {
         toast('音声が取得できませんでした。共有するときに「音声も共有する」をオンにしてください', 7000);
-        displayStream.getTracks().forEach(t => t.stop()); displayStream = null; return;
+        return; // 共有は finally で止める
+      }
+    }
+    if (kind !== 'playback') {
+      // 音声は外部に送らない。PC内で認識できないときは始めない（クラウド認識には切り替えない）
+      const st = await checkLocalSpeech($('srcLang').value);
+      if (st !== 'available') {
+        const msg = {
+          unsupported: 'このブラウザではマイク・画面音声の認識が使えません（このアプリは音声を外部に送らないため）。Chromeで開いてください',
+          downloadable: '英語の音声認識データがまだありません。「AIを準備」を押してください',
+          downloading: '英語の音声認識データをダウンロード中です。終わってから開始してください',
+        }[st] || 'このPCではPC内の音声認識が使えません';
+        toast(msg, 8000);
+        statRec('err', (LOCAL_SPEECH_MSG[st] || [])[1] || '使えません');
+        return; // 画面共有を開いていれば finally で止める
       }
     }
     if (kind === 'playback') {
@@ -250,7 +351,12 @@ async function start() {
     // （0.2秒おきの確認の合間に無音が終わっても、区切りを見逃さないように）
     source.on('interim', t => { const now = clockNow(); handle([...segmenter.tick(now), ...segmenter.interim(t, now)]); });
     source.on('final', t => { const now = clockNow(); handle([...segmenter.tick(now), ...segmenter.final(t, now)]); });
-    source.on('state', ({ kind: k, message }) => { if (message) statRec(k, message); });
+    lastRecError = '';
+    source.on('state', ({ kind: k, message }) => {
+      if (!message) return;
+      statRec(k, message);
+      if (k === 'err') { lastRecError = message; toast(message, 8000); } // 止まった理由を見えるように残す
+    });
     source.on('end', () => { if (running) stop(); });
 
     running = true;
@@ -291,7 +397,8 @@ function stop() {
     queue.setFlashEnabled(false);         // 待ちの速報を捨てる（段落訳・仕上げ訳は最後まで続ける）
     view.setFlash('');
     setRunningButtons('idle');
-    statRec('', '停止');
+    // 音声認識がエラーで止まったときは、その理由を表示に残す（「停止」で上書きしない）
+    if (lastRecError) statRec('err', lastRecError); else statRec('', '停止');
     stopping = false;
   }
 }
@@ -302,7 +409,7 @@ $('prep').onclick = async () => {
   $('prep').disabled = true;
   // ダウンロードは数分かかることがあるが、応答しないブラウザでボタンが戻らなくならないよう30秒で押せるようにする
   const reenable = setTimeout(() => { $('prep').disabled = false; }, 30000);
-  try { await prepareAI(true); clearTimeout(reenable); toast('準備が完了しました。使えない機能がないか、上の状態表示で確認してください'); }
+  try { await prepareAI(true); clearTimeout(reenable); toast('準備が終わりました。各機能が使えるかは、状態表示の欄で確認してください'); }
   finally { $('prep').disabled = false; }
 };
 
@@ -315,20 +422,65 @@ async function doSummary(manual) {
   const closedCount = openIdx === -1 ? paras.length : openIdx;
   const part = paras.slice(lastSumIdx, manual ? paras.length : closedCount).filter(p => p.src);
   if (!part.length) { if (manual) toast('要約する内容がまだありません'); return; }
-  const s = summarizer || await limited(ensureSummarizer(!!manual, statSum), !!manual, statSum);
-  if (s) summarizer = s;
-  if (!s) { if (manual) toast('このPCでは要約機能が使えません'); return; }
-  const text = part.map(p => p.ja || p.src).join('\n');
-  if (text.length < 80 && !manual) return;
-  const from = hhmm(part[0].startedAt), to = hhmm(Date.now());
-  lastSumIdx = Math.max(lastSumIdx, closedCount);
-  const sums = $('sums'); if (sums.querySelector('.empty')) sums.innerHTML = '';
-  const card = document.createElement('div'); card.className = 'sum';
-  const h = document.createElement('div'); h.className = 'h'; h.textContent = `${from}〜${to} の要約`;
-  const b = document.createElement('div'); b.className = 'b'; b.textContent = '要約中…';
-  card.append(h, b); sums.prepend(card);
-  try { b.textContent = await s.summarize(text.slice(-12000), { context: '海外の講演・ウェビナーの文字起こし（機械翻訳）です。要点を日本語で簡潔に。' }); }
-  catch (e) { b.textContent = '要約に失敗しました: ' + e.message; }
+  if (summarizing) { if (manual) toast('いま要約を作っています。終わってからもう一度押してください'); return; }
+  // 要約の材料は英語の原文（あいづちは除く）。訳文を並べると「訳のまとめ」になってしまうため
+  const text = part.map(p => p.srcForTranslate).filter(Boolean).join('\n');
+  if (!text) { if (manual) toast('前回の要約のあとは、あいづちだけでした'); lastSumIdx = Math.max(lastSumIdx, closedCount); return; }
+  if (text.length < 200 && !manual) return; // 短すぎるときは次回にまとめる
+  summarizing = true; // ここから先は二重に走らせない（自動要約とボタンが重なっても1つだけ）
+  try {
+    // 内蔵LLM（見出し付き）を毎回まず試す。前回失敗して簡易版になっていても、ここで準備し直す
+    if (!summaryLM) await prepareSummary(!!manual);
+    if (!summaryLM && !summarizer) { if (manual) toast('このPCでは要約機能が使えません'); return; }
+    const from = hhmm(part[0].startedAt), to = hhmm(Date.now());
+    lastSumIdx = Math.max(lastSumIdx, closedCount);
+    const sums = $('sums'); if (sums.querySelector('.empty')) sums.innerHTML = '';
+    const card = document.createElement('div'); card.className = 'sum';
+    const h = document.createElement('div'); h.className = 'h'; h.textContent = `${from}〜${to} の要約`;
+    const b = document.createElement('div'); b.className = 'b'; b.textContent = '要約中…';
+    card.append(h, b); sums.prepend(card);
+    try {
+      const { text: out, simple } = await summarizeText(text);
+      b.textContent = out;
+      if (simple) h.textContent = `${from}〜${to} の要約（簡易版）`;
+    } catch (e) {
+      b.textContent = '要約に失敗しました: ' + (e?.message || e);
+    }
+  } finally {
+    summarizing = false;
+  }
+}
+
+// 応答しない処理で要約が止まったままにならないよう、時間切れを設ける
+function withDeadline(promise, ms, message) {
+  let timer;
+  const limit = new Promise((_, ng) => { timer = setTimeout(() => ng(new Error(message)), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+// 内蔵LLMで見出し付きの要約を作る。その間は仕上げ訳を止めて、内蔵LLMの取り合いを避ける。
+// 内蔵LLMが使えない・失敗したときは Summarizer API（簡易版）で作る。
+async function summarizeText(text) {
+  if (summaryLM) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    queue.pauseRefine(true);
+    try {
+      await queue.whenRefineIdle();
+      return { text: await summaryLM.summarize(text, { signal: ctrl.signal }), simple: false };
+    } catch (e) {
+      console.warn('[要約] 内蔵LLMで作れなかったため簡易版に切り替えます', e);
+      // 次の要約では内蔵LLMを準備し直す（2時間の利用中に一度壊れても、簡易版のままにしない）
+      summaryLM = null;
+      resetSummaryLM();
+      if (!summarizer) summarizer = await limited(ensureSummarizer(false, () => {}), false, () => {});
+      if (!summarizer) throw e;
+    } finally {
+      clearTimeout(timer);
+      queue.pauseRefine(false);
+    }
+  }
+  return { text: await withDeadline(summarizer.summarize(text.slice(-8000)), 120000, '要約が時間内に終わりませんでした'), simple: true };
 }
 $('sumNow').onclick = () => doSummary(true);
 
@@ -338,7 +490,8 @@ function localStamp(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}`;
 }
 $('save').onclick = () => {
-  const body = transcript.all().filter(p => p.src).map(p => `[${hhmm(p.startedAt)}] ${p.ja || p.src}\n        (${p.src})`).join('\n')
+  // あいづちだけの段落は保存しない。訳がない段落は原文（あいづちを除いたもの）を出す
+  const body = transcript.all().filter(p => p.src && p.stage !== 'filler').map(p => `[${hhmm(p.startedAt)}] ${p.ja || p.srcForTranslate || p.src}\n        (${p.src})`).join('\n')
     + '\n\n==== 要約 ====\n' + [...document.querySelectorAll('.sum')].reverse().map(c => c.innerText).join('\n\n');
   const a = document.createElement('a');
   // 先頭にBOMを付けて、古いメモ帳でも文字化けしないようにする
@@ -393,6 +546,17 @@ $('optReset').onclick = () => {
 showSettings();
 // テスト再生を選んだら、速さや英文を入れる欄が見えるように設定を開く
 $('source').addEventListener('change', () => { if ($('source').value === 'playback') $('settingsPanel').open = true; });
+
+// ---------- 最新の文章の位置 ----------
+// 最新の文章が画面の一番下ではなく、真ん中よりやや下（ログ欄の上から6割ほど）に来るよう、
+// ログ欄の高さの4割を下の余白にする（ウィンドウの大きさが変わっても合わせる）
+function fitFollowGap() {
+  const log = $('log');
+  log.style.setProperty('--follow-gap', Math.round(log.clientHeight * 0.4) + 'px');
+  view.scrollIfFollowing(); // 大きさが変わっても、最新を追っているなら位置を合わせ直す
+}
+if ('ResizeObserver' in self) new ResizeObserver(fitFollowGap).observe($('log'));
+fitFollowGap();
 
 // ---------- 起動時 ----------
 prepareAI(false);

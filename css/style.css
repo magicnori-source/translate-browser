@@ -66,3 +66,16 @@ details.settings .hint{font-size:11px;color:var(--sub)}
 .interim-src{font-size:calc(var(--fs)*.62);color:var(--sub);line-height:1.5;padding:0 0 10px;min-height:1.5em}
 .hide-src .interim-src{display:none}
 .interim-src:empty{min-height:0;padding:0}
+
+/* ---------- 改修: 最新行の位置・あいづち・仕上げ訳の記録 ---------- */
+/* 最新の文章が画面の一番下ではなく、真ん中よりやや下（ログ欄の上から6割ほど）に来るよう、ログの下に余白を取る */
+#log{--follow-gap:30vh;padding-bottom:var(--follow-gap)} /* 実際の値は app.js がログ欄の高さの4割に合わせる */
+/* あいづちだけの段落: 訳の行は出さず、英語だけを小さく */
+.para[data-stage="filler"]{padding:2px 0}
+.para[data-stage="filler"] .ja{font-size:11px;line-height:1.4}
+.para[data-stage="filler"] .src{font-style:italic;opacity:.7}
+/* 仕上げ訳の記録（設定パネルの中） */
+details.settings .refine-log{flex-basis:100%;font-size:12px;color:var(--sub)}
+details.settings .refine-log summary{cursor:pointer}
+details.settings .refine-log ol{margin:6px 0 0;padding-left:18px;max-height:220px;overflow:auto}
+details.settings .refine-log li{margin-bottom:6px;white-space:pre-wrap;word-break:break-word}

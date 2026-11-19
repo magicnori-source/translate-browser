@@ -1,6 +1,6 @@
 // 翻訳の順番待ち（純粋モジュール）
 // - 速報・段落訳: Translator を使う1本の直列レーン（段落訳を優先、速報は間引く）
-// - 仕上げ訳: Prompt API を使う別の直列レーン（先着順、待ちあふれと時間切れで捨てる）
+// - 仕上げ訳: Prompt API を使う別の直列レーン（先着順、待ちあふれと時間切れで捨てる。pauseRefine で一時停止できる）
 // 時刻とタイマーは now / schedule で外から受け取る（Date.now や setTimeout は直接使わない）。
 
 const NOOP = () => {};
@@ -37,6 +37,8 @@ export function createTranslateQueue({
   let refineQueue = [];         // 待ち中 [{paraId, src, contextParas}]
   let rTask = null;             // 実行中 {paraId, controller, cancelTimeout, startedAt}
   let refineRequested = new Set(); // 1段落1回にするための記録
+  let refinePaused = false;     // true のあいだ新しい仕上げ訳を始めない（要約などで内蔵LLMを譲る）
+  let idleWaiters = [];         // whenRefineIdle() の解決関数
 
   // ---- 状態 ----
   let dropped = 0;
@@ -72,6 +74,7 @@ export function createTranslateQueue({
       lastRefineMs,
       translateBusy: !!tTask,
       refineBusy: !!rTask,
+      refinePaused,
     };
   }
 
@@ -232,8 +235,16 @@ export function createTranslateQueue({
     emitStats();
   }
 
+  // 実行中の仕上げ訳がないとき、待っている whenRefineIdle() をすべて解決する
+  function resolveIdleWaiters() {
+    if (rTask || idleWaiters.length === 0) return;
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
   function pumpRefine() {
-    if (rTask || refineQueue.length === 0) return;
+    if (rTask || refinePaused || refineQueue.length === 0) return;
     const item = refineQueue.shift();
     const gen = generation;
     const controller = new AbortController();
@@ -248,6 +259,7 @@ export function createTranslateQueue({
       if (gen !== generation || rTask !== task) return false;
       rTask = null;
       lastRefineMs = now() - task.startedAt;
+      resolveIdleWaiters();
       return true;
     };
 
@@ -282,6 +294,19 @@ export function createTranslateQueue({
     );
   }
 
+  // 仕上げ訳の一時停止。実行中のものは最後まで続け、依頼は待ちに入れる（上限超えは従来どおり捨てる）
+  function pauseRefine(on) {
+    refinePaused = !!on;
+    if (!refinePaused) pumpRefine();
+    emitStats();
+  }
+
+  // 実行中の仕上げ訳がなくなったら解決する（なければすぐ解決。clear() でも解決）
+  function whenRefineIdle() {
+    if (!rTask) return Promise.resolve();
+    return new Promise((resolve) => idleWaiters.push(resolve));
+  }
+
   // ---------------- 操作 ----------------
   function setFlashEnabled(enabled) {
     flashEnabled = !!enabled;
@@ -311,6 +336,8 @@ export function createTranslateQueue({
       rTask = null;
     }
     refineRequested = new Set();
+    refinePaused = false;
+    resolveIdleWaiters();
     dropped = 0;
     lastRefineMs = null;
     emitStats();
@@ -320,6 +347,8 @@ export function createTranslateQueue({
     requestFlash,
     requestParagraph,
     requestRefine,
+    pauseRefine,
+    whenRefineIdle,
     on,
     setFlashEnabled,
     clear,

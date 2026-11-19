@@ -4,6 +4,10 @@
 
 const $ = id => document.getElementById(id);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const LOCAL_LANG = 'en-US';
+// PC内で認識する設定（processLocally）と、その確認用の機能があるか。本体（speech.js）と同じ判定
+const hasLocalSpeech = () => !!SR && typeof SR.available === 'function' && 'processLocally' in SR.prototype;
+let localSpeechState = 'unsupported'; // 一覧で調べた結果（'available' など）
 
 const STATE_LABEL = { ok: '○', warn: '△', err: '×', info: '－' };
 const groups = [];       // {title, rows:[row]}
@@ -159,25 +163,33 @@ async function checkEnv() {
 async function checkSpeech() {
   const g = makeGroup('音声の取り込みと認識');
   const rSr = g.add('音声認識（Web Speech API）');
-  if (!SR) rSr.set('err', 'このブラウザにない', '音声認識が使えません。ChromeかEdgeで開いてください。');
-  else rSr.set('ok', 'あり', '実際に使えるかは、下の「音声認識を実際に試す」で確認してください（Edgeは network エラーが出ることがあります）。');
+  if (!SR) rSr.set('err', 'このブラウザにない', '音声認識が使えません。ChromeかEdgeの新しい版で開いてください。');
+  else rSr.set('ok', 'あり', 'このアプリが使うのは、次の行の「PC内の音声認識」だけです。');
 
-  const rLocal = g.add('端末内での音声認識');
-  if (SR && typeof SR.available === 'function') {
+  const rLocal = g.add('PC内の音声認識');
+  const NO_CLOUD = 'このアプリはPC内の認識だけを使い、音声を外部（クラウドの認識サービス）には送りません。';
+  localSpeechState = 'unsupported';
+  if (hasLocalSpeech()) {
     try {
-      const av = await withTimeout(SR.available({ langs: ['en-US'], processLocally: true }));
+      const av = await withTimeout(SR.available({ langs: [LOCAL_LANG], processLocally: true }));
+      localSpeechState = av;
       const map = {
-        available: ['ok', '利用可能', '通信なしで音声認識できます。'],
-        downloadable: ['info', '未ダウンロード', '端末内の認識モデルは未取得です（このアプリは通常のクラウド認識を使うので問題ありません）。'],
-        downloading: ['info', 'ダウンロード中', ''],
-        unavailable: ['info', '利用不可', '端末内での認識はできません（通常のクラウド認識は使えます）。'],
+        available: ['ok', '利用可能', 'PC内で音声認識できます（音声は外部に送りません）。'],
+        downloadable: ['warn', '未ダウンロード', '本体の「AIを準備」でダウンロードできます。下の「PC内の認識で試す」でもダウンロードを試せます。'],
+        downloading: ['warn', 'ダウンロード中', 'PC内の音声認識データをダウンロードしています。'],
+        unavailable: ['err', '利用不可', `このPC・ブラウザではPC内の音声認識ができません。${NO_CLOUD}そのため音声認識は使えません。`],
       };
-      rLocal.set(...(map[av] || ['info', String(av), '']));
-    } catch (e) { rLocal.set('info', '確認できず', e.message); }
-  } else rLocal.set('info', '確認できず', 'このブラウザには確認用の機能がありません。通常のクラウド認識を使います。');
+      rLocal.set(...(map[av] || ['warn', String(av), '想定外の応答です。']));
+    } catch (e) {
+      localSpeechState = 'unavailable';
+      rLocal.set('warn', '確認できず', `${e.message}。下の「PC内の認識で試す」で確認してください。`);
+    }
+  } else {
+    rLocal.set('err', '対応していない', `このブラウザにはPC内で音声認識する機能がありません。${NO_CLOUD}そのため音声認識は使えません（Chrome／Edgeの新しい版で試してください）。`);
+  }
 
   const rDisp = g.add('画面・タブの音声の共有（getDisplayMedia）');
-  if (navigator.mediaDevices?.getDisplayMedia) rDisp.set('ok', 'あり', '音声を認識に直接渡せるかは、下の「画面・タブの音声で試す」で確認してください。');
+  if (navigator.mediaDevices?.getDisplayMedia) rDisp.set('ok', 'あり', '音声を認識に直接渡せるかは、下の「PC内の認識で試す（画面・タブ音声）」で確認してください。');
   else rDisp.set('err', 'なし', 'マイク方式を使ってください。');
 }
 
@@ -211,7 +223,7 @@ async function checkSummarizer(g) {
 }
 
 async function checkAI() {
-  const g = makeGroup('ブラウザ内蔵のAI（無料・PCの中で処理）');
+  const g = makeGroup('ブラウザ内蔵のAI（無料・PC内で処理）');
   await Promise.all([checkTranslator(g), checkPrompt(g), checkSummarizer(g)]);
   const labels = g.rows.map(r => r.label);
   const r = g.add('管理者による制限');
@@ -246,17 +258,21 @@ async function checkStorage() {
   } catch (e) { rQ.set('info', '不明'); }
 }
 
-// ---------- 音声認識の実地テスト ----------
+// ---------- 音声認識の実地テスト（PC内の認識だけ。音声は外部に送らない） ----------
 const SR_ERRORS = {
-  network: '通信エラー。Edgeでよく起きます。Chromeで試してください。',
+  network: '通信エラー。PC内の音声認識ができていない可能性があります（このアプリは外部の認識サービスには切り替えません）。',
   'not-allowed': 'マイク（または音声）の利用が許可されていません。アドレスバー左のアイコンから許可してください。',
   'audio-capture': 'マイクが見つかりません。',
   'no-speech': '音声が聞こえませんでした。音量を確認してください。',
-  'language-not-supported': '英語の認識に対応していません。',
-  'service-not-allowed': '音声認識サービスの利用が許可されていません（管理者による制限の可能性）。',
+  'language-not-supported': 'PC内の英語の音声認識データがありません。本体の「AIを準備」でダウンロードしてください。',
+  'service-not-allowed': 'PC内の音声認識が許可されていません（管理者による制限の可能性）。',
   // 以下はこの画面独自の名前（Web Speech API の正式なエラー名ではない）
   'start-with-track-unsupported': 'このブラウザは画面・タブの音声を認識に直接渡せません。マイク方式を使ってください。',
 };
+
+function logResult(kind, msg) {
+  extraResults.push(`${new Date().toLocaleTimeString('ja-JP')} PC内の音声認識テスト（${kind}）: ${msg}`);
+}
 
 function runSpeechTest(kind, track) {
   const live = $('speechLive');
@@ -268,28 +284,29 @@ function runSpeechTest(kind, track) {
       const heard = (finals + interim).trim();
       let msg = errors.length
         ? `エラー: ${errors.map(e => `${e}（${SR_ERRORS[e] || '詳細不明'}）`).join(' ／ ')}`
-        : heard ? '正常に認識できました。' : '何も聞き取れませんでした。英語の音声が流れていたか確認してください。';
+        : heard ? 'PC内の認識で正常に聞き取れました。' : '何も聞き取れませんでした。英語の音声が流れていたか確認してください。';
       // 古いブラウザは start(音声) の引数を黙って無視し、マイクで聞き取ってしまう
       if (track && heard && !errors.length) msg += '（注: マイクに音が入らない状態で試した場合だけ、画面・タブ音声を直接取り込めたと判断できます）';
-      live.textContent = `【${kind}】${msg}\n聞き取った英語: ${heard || '（なし）'}`;
-      extraResults.push(`${new Date().toLocaleTimeString('ja-JP')} 音声認識テスト（${kind}）:${msg} ／ 聞き取り: ${heard.slice(0, 120) || 'なし'}`);
+      live.textContent = `【PC内・${kind}】${msg}\n聞き取った英語: ${heard || '（なし）'}`;
+      logResult(kind, `${msg} ／ 聞き取り: ${heard.slice(0, 120) || 'なし'}`);
       resolve();
     };
     const r = new SR();
-    r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
+    r.lang = LOCAL_LANG; r.continuous = true; r.interimResults = true;
+    r.processLocally = true; // PC内だけで認識する（外部に送らない）
     r.onresult = ev => {
       interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const res = ev.results[i];
         if (res.isFinal) finals += res[0].transcript + ' '; else interim += res[0].transcript;
       }
-      live.textContent = `【${kind}】認識中…\n${finals}${interim}`;
+      live.textContent = `【PC内・${kind}】認識中…\n${finals}${interim}`;
     };
     r.onerror = e => { if (e.error !== 'aborted') errors.push(e.error); };
     r.onend = finish;
     try {
       if (track) r.start(track); else r.start();
-      live.textContent = `【${kind}】10秒間聞き取ります…`;
+      live.textContent = `【PC内・${kind}】10秒間聞き取ります…`;
     } catch (e) {
       errors.push(track ? 'start-with-track-unsupported' : `start-failed: ${e.message}`);
       finish(); return;
@@ -300,17 +317,70 @@ function runSpeechTest(kind, track) {
   });
 }
 
-function setSpeechButtons(disabled) { $('testMic').disabled = $('testDisplay').disabled = disabled; }
+// PC内で試せるかを確かめる。試せなければ理由を表示・記録して false
+function canTryLocal(kind) {
+  let msg = '';
+  if (!SR) msg = 'このブラウザは音声認識に対応していません。';
+  else if (!('processLocally' in SR.prototype)) msg = 'このブラウザはPC内の音声認識に対応していません（このアプリは音声を外部に送らないため、認識できません）。';
+  if (!msg) return true;
+  $('speechLive').textContent = `【PC内・${kind}】${msg}`;
+  logResult(kind, msg);
+  toast(msg, 5000);
+  return false;
+}
 
-$('testMic').onclick = async () => {
-  if (!SR) { toast('このブラウザは音声認識に対応していません'); return; }
+// 音声認識データが未取得なら入れてみる。ボタン操作の直後（最初の await より前）に呼ぶこと。
+// 戻り値: 'ready'（入っている／入った）・'installed-now'（今回入れた）・'failed'
+async function ensureLocalData(kind) {
+  if (localSpeechState === 'available' || typeof SR.install !== 'function') return 'ready';
+  let installing;
+  try { installing = SR.install({ langs: [LOCAL_LANG], processLocally: true }); }
+  catch (e) { installing = Promise.reject(e); }
+  $('speechLive').textContent = `【PC内・${kind}】PC内の音声認識データを準備しています…（初回は数分かかることがあります）`;
+  try {
+    const ok = await withTimeout(installing, 300);
+    if (ok === true) {
+      localSpeechState = 'available';
+      logResult(kind, '音声認識データの準備（install）: 成功');
+      return 'installed-now';
+    }
+    logResult(kind, `音声認識データの準備（install）: 失敗（応答 ${String(ok)}）`);
+  } catch (e) {
+    logResult(kind, `音声認識データの準備（install）: 失敗（${e?.message || e}）`);
+  }
+  $('speechLive').textContent = `【PC内・${kind}】PC内の音声認識データを準備できませんでした。このPC・ブラウザではPC内の音声認識ができない可能性があります。`;
+  return 'failed';
+}
+
+function setSpeechButtons(disabled) { $('testLocalMic').disabled = $('testLocalDisplay').disabled = disabled; }
+
+$('testLocalMic').onclick = async () => {
+  const kind = 'マイク';
+  if (!canTryLocal(kind)) return;
   setSpeechButtons(true);
-  try { await runSpeechTest('マイク'); } finally { setSpeechButtons(false); }
+  try {
+    const prep = await ensureLocalData(kind);
+    if (prep === 'failed') return;
+    await runSpeechTest(kind);
+  } finally { setSpeechButtons(false); }
 };
 
-$('testDisplay').onclick = async () => {
-  if (!SR) { toast('このブラウザは音声認識に対応していません'); return; }
+$('testLocalDisplay').onclick = async () => {
+  const kind = '画面・タブ音声';
+  if (!canTryLocal(kind)) return;
   if (!navigator.mediaDevices?.getDisplayMedia) { toast('このブラウザは画面・タブの共有に対応していません。マイクで試してください。', 5000); return; }
+  if (localSpeechState !== 'available' && typeof SR.install === 'function') {
+    // 画面共有もボタン操作の直後でないと開けないため、データの準備だけ先に済ませ、もう一度押してもらう
+    setSpeechButtons(true);
+    try {
+      const prep = await ensureLocalData(kind);
+      if (prep !== 'failed') {
+        $('speechLive').textContent = `【PC内・${kind}】PC内の音声認識データの準備ができました。もう一度このボタンを押して試してください。`;
+        toast('準備ができました。もう一度押してください。', 5000);
+      }
+    } finally { setSpeechButtons(false); }
+    return;
+  }
   let stream;
   try { stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); }
   catch (e) {
@@ -318,20 +388,21 @@ $('testDisplay').onclick = async () => {
     const msg = e.name === 'NotAllowedError'
       ? `画面共有がキャンセルされたか、許可されていません（${e.message}）`
       : `画面共有を開始できませんでした（${e.name}: ${e.message}）`;
-    $('speechLive').textContent = `【画面・タブ音声】${msg}`;
-    extraResults.push(`${new Date().toLocaleTimeString('ja-JP')} 音声認識テスト（画面・タブ音声）: ${msg}`);
+    $('speechLive').textContent = `【PC内・${kind}】${msg}`;
+    logResult(kind, msg);
     toast(msg, 5000);
     return;
   }
   stream.getVideoTracks().forEach(t => t.stop()); // 映像は使わない（保存・送信もしない）
   const track = stream.getAudioTracks()[0];
   if (!track) {
-    $('speechLive').textContent = '【画面・タブ音声】音声が共有されていません。共有の画面で「タブの音声も共有する」（画面全体なら「システムの音声も共有する」）をオンにしてください。';
-    extraResults.push('音声認識テスト（画面・タブ音声）: 音声トラックなし（共有時に音声がオフ）');
+    $('speechLive').textContent = `【PC内・${kind}】音声が共有されていません。共有の画面で「タブの音声も共有する」（画面全体なら「システムの音声も共有する」）をオンにしてください。`;
+    logResult(kind, '音声トラックなし（共有時に音声がオフ）');
+    stream.getTracks().forEach(t => t.stop());
     return;
   }
   setSpeechButtons(true);
-  try { await runSpeechTest('画面・タブ音声', track); }
+  try { await runSpeechTest(kind, track); }
   finally { stream.getTracks().forEach(t => t.stop()); setSpeechButtons(false); }
 };
 

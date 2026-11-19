@@ -21,6 +21,14 @@ test('システムプロンプトに主要なルールが入っている', () =>
   assert.match(s, /文脈/);
 });
 
+test('システムプロンプトに、あいづち・言いよどみを訳さない指示が入っている', () => {
+  const s = buildSystemPrompt();
+  assert.match(s, /あいづち/);
+  assert.match(s, /言いよどみ/);
+  for (const w of ['um', 'uh', 'oh', 'wow', 'you know']) assert.ok(s.includes(w), w);
+  assert.match(s, /訳さない/);
+});
+
 test('訳す段落と参考の機械訳が入る', () => {
   const p = buildRefinePrompt({ target: { src: 'Hello\nworld.', ja: 'こんにちは世界。' } });
   assert.match(p, /【訳す段落】\n英: Hello world\.\n参考の機械訳: こんにちは世界。$/);

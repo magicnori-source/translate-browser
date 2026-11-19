@@ -13,6 +13,12 @@ function hhmm(t){
 }
 function setText(el, text){ if (el.textContent !== text) el.textContent = text; }
 
+// 訳の行に出す文字。あいづちだけの段落（stage 'filler'）は訳さないので空、訳がまだなら「…」
+function jaText(p){
+  if (p.stage === 'filler') return '';
+  return p.ja ? p.ja : '…';
+}
+
 export function createView({ listEl, flashEl, logEl, backBtn }){
   const nodes = new Map();        // paraId -> { root, jt, src }
   const dirty = new Map();        // paraId -> 最新の段落データ（参照）
@@ -37,7 +43,7 @@ export function createView({ listEl, flashEl, logEl, backBtn }){
     root.dataset.stage = p.stage || 'pending';
     const ja = document.createElement('div'); ja.className = 'ja';
     const t = document.createElement('span'); t.className = 't'; t.textContent = hhmm(p.startedAt);
-    const jt = document.createElement('span'); jt.className = 'jt'; jt.textContent = p.ja || '…';
+    const jt = document.createElement('span'); jt.className = 'jt'; jt.textContent = jaText(p);
     const src = document.createElement('div'); src.className = 'src'; src.textContent = p.src || '';
     ja.append(t, jt); root.append(ja, src);
     return { root, jt, src };
@@ -68,7 +74,7 @@ export function createView({ listEl, flashEl, logEl, backBtn }){
   function apply(p){
     const n = nodes.get(p.id);
     if (!n) return;
-    setText(n.jt, p.ja ? p.ja : '…');
+    setText(n.jt, jaText(p));
     setText(n.src, p.src || '');
     const stage = p.stage || 'pending';
     if (n.root.dataset.stage !== stage) n.root.dataset.stage = stage;
